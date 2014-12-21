@@ -1,0 +1,123 @@
+---
+title: "<center>Predicting with Weight Lifting Exercise Dataset</center>"
+author: "<center>Javier Melo</center>"
+date: "<center>Thursday, December 18, 2014</center>"
+output:
+  html_document:
+    fig_height: 3.21
+    fig_width: 4.5
+---
+###Executive Summary
+
+Using devices to collect large amounts of data about physical activity is trending and many software apps are entering into the market to run on mobile and personal computers. Most of these apps offer a basic functionality to quantify physical activity, but they do not allow the analysis of how well the activity was performed. The dataset  [Weight Lifting Exercise Dataset][1] contains data for Unilateral Dumbbell Biceps Curl and is classified by how well the workout was performed using five categories.  This exercise uses a subset of the original dataset referenced to select the features and build a model with cross validation to predict the category. The model built was able to predict the category with 99.37% accuracy using a testing dataset.
+
+###Data Manipulation
+
+Data used for this exercise consists of 2 files. The file [pml-training.csv](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv ) is the training data for this project and it is a subset of the original file referenced. It contains 160 variables, including calculated descriptive statistics by windows. A window is a lapse of time where the observations of the signals output by the device. However this dataset has at least two troubles. First, the column names of the calculated variables are misplaced. Also, the indicator of new window (variable **"new_window"**, [yes/no]) is not thoroughly defined because it has overlaps even across users. The file [pml-testing.csv](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv) is the testing file to make the predictions requested by this exercise. It is a subset of the original file and it does not intersect with the training file. There are no values for the calculated statistics variables.
+
+For the reasons mentioned above a tidy dataset was built by removing calculated statistic variables.  Although there should be some dependency on the **user_name** variable, variables from columns 1 to 7 were removed. The assumption is that the model should be able to predict independent of the user.
+
+###Building the Model
+
+The model built in this exercise is different than the one built by the authors in the paper referenced. A filter to identify the most relevant features according to the nature of the data was not used in this exercise.  It was used a wrapper approach that uses the learning algorithm itself to find the best features. Another difference in this exercise is the usage of the punctual observations instead of working  with summarized statistics of chunks of observations.
+
+Using caret package, the training data set was balanced split (75%/25%) into one for training and another one for testing. Using random forests algorithm on the training set with four different numbers of splitting variables. 10-fold non-repeated cross-validation  was used and the default multi-class metric of Accuracy and Kappa used. Parallel processing using two cores using doSNOW package was used to increase performance. For the tuning process of finding the "optimal" or final model, the function **best** was used. This function selects the model with largest metric, in this case Accuracy and Kappa.
+
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+library(caret) # this is not cached
+```
+
+```{r,cache=TRUE,warning=FALSE,message=FALSE}
+
+library(caret)
+set.seed(79873)
+# reading and data cleaning
+training <- read.csv("pml-training.csv", header = TRUE )
+training$classe <- factor(training$classe)
+testing <- read.csv("pml-testing.csv", header = TRUE)
+noMatch <- c("kurtosis_","skewness_", "min_", "max_", "amplitude_", "avg_",
+             "var_", "stddev_")
+colsel <- union(1:7,grep(paste(noMatch,collapse="|"),names(training),
+                         value=FALSE))
+training <- training[ , -colsel] 
+testing <- testing[, -colsel]
+#enabling paralled processing
+library(doSNOW)
+cl <- makeCluster(2)
+registerDoSNOW(cl)
+# splitting data
+inTrain <- createDataPartition(y=training$classe,
+                               p=0.75, list=FALSE)
+strain <- training[inTrain,]
+stest <- training[-inTrain,]
+
+# defining the train control
+cvCtrl <-
+        trainControl(
+                method = "cv", # cross validation
+                number = 10, # 10 folds
+                verboseIter = FALSE, # Debug, seems to be proving helpful
+                selectionFunction = "best"
+        )
+# to control the number of splitting variables
+rfGrid <- expand.grid(.mtry = c(5,7,10,15))
+
+set.seed(777)
+modelTree4 <- train(strain[,1:52],
+                strain[,53],
+                method = "rf",
+                tuneGrid = rfGrid,
+                trControl = cvCtrl,
+                # arguments for rf
+                importance=TRUE,
+                ntrees = 100
+)
+stopCluster(cl)
+```
+
+### Results
+
+The Performance estimates of the re-sampling process:
+
+```{r,warning=TRUE,message=FALSE,eval=TRUE,echo=TRUE,}
+#
+getTrainPerf(modelTree4)
+```
+
+Graphics below show the re-sampling results across the tuning parameters. Specifically in this case it shows how the selected measurement of errors, Accuracy and Concordance(Kappa) behaves as with several tries of the number of selected predictors (mtyr parameter in Random Forest algorithm) changes.
+
+```{r,fig.align='center', echo=FALSE}
+plot(modelTree4, scales = list(x = list(rot = 90)),
+     main="Accuracy ~ Number of Variables (mtyr)")
+plot(modelTree4, metric = "Kappa", scales = list(x = list(rot = 90)),
+     main="Kappa ~ Number of Variables (mtyr)")
+```
+
+The graphics below shows the density of both metrics used.
+
+```{r,fig.align='center',echo=FALSE}
+resampleHist(modelTree4)
+```
+
+Prediction on testing splitting is shown now along with the confusion matrix.
+
+```{r,warning=TRUE,message=FALSE}
+preds4 <- predict(modelTree4, stest)
+confusionMatrix(preds4, stest$classe)
+```
+
+The prediction on the testing dataset from pml-testing.csv file with twenty cases that was submitted for automated grading.
+
+```{r,warning=TRUE,message=FALSE}
+rbind(1:20,as.character(predict(modelTree4, testing)))
+```
+
+### Conclusion
+
+The data set was balanced-divided into a training and a test set, a random forest algorithm was applied with 10-fold cross-validation and four different values of number of splitting variables(mtyr parameter). Results demonstrate that the best model could be found  using 10 predictors available for splitting at each interior tree node and with an Accuracy of 99.50% and Kappa of 99.37%. On the test set, the detailed accuracy by **eclass** was: A=99.97%, B=99.73%, C=99.16%, D=99.09% and E=99.82%; and a weighted Accuracy of 99.37%. The prediction on pml-testing was performed with an accuracy of 100%. This results suggest that based on punctual readings from the device signals is possible to predict quicker and give feedback to the user about the quality of the workout.
+
+###References
+
+[1]Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+
+
